@@ -10,45 +10,51 @@ from openai import OpenAI
 
 load_dotenv()
 
-API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-if not API_KEY:
-    raise ValueError(
-        "OPENROUTER_API_KEY is missing from .env"
+# ============================================================
+# GET API KEY
+# ============================================================
+
+api_key = os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    raise RuntimeError(
+        "OPENAI_API_KEY is missing. "
+        "Make sure your .env file contains OPENAI_API_KEY."
     )
 
 
 # ============================================================
-# OPENROUTER CLIENT
+# CLIENT
 # ============================================================
 
 client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=API_KEY,
+    api_key=api_key,
+    base_url=os.getenv(
+        "OPENAI_BASE_URL",
+        "https://openrouter.ai/api/v1"
+    )
 )
 
 
 # ============================================================
-# GENERATE LLM RESPONSE
+# GENERATE RESPONSE
 # ============================================================
 
-def generate_response(prompt: str) -> str:
+def generate_response(prompt: str):
 
-    response = client.chat.completions.create(
-        model="openrouter/free",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-    )
-
-    content = response.choices[0].message.content
-
-    if not content:
+    if not prompt or not prompt.strip():
         raise ValueError(
-            "LLM returned an empty response."
+            "Prompt cannot be empty."
         )
 
-    return content.strip()
+    response = client.responses.create(
+        model=os.getenv(
+            "OPENAI_MODEL",
+            "gpt-4o-mini"
+        ),
+        input=prompt,
+        max_output_tokens=1000
+    )
+
+    return response.output_text.strip()

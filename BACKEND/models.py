@@ -1,22 +1,53 @@
-from typing import Optional, Any
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+
+# ============================================================
+# INTERVIEW FEEDBACK
+# ============================================================
+
+class InterviewFeedback(BaseModel):
+    """
+    Final structured feedback returned after the interview.
+    """
+
+    summary: str = ""
+
+    strengths: list[str] = Field(
+        default_factory=list
+    )
+
+    gaps: list[str] = Field(
+        default_factory=list
+    )
+
+    next: list[str] = Field(
+        default_factory=list
+    )
+
+
+# ============================================================
+# INTERVIEW REQUEST
+# ============================================================
 
 class InterviewRequest(BaseModel):
+
     sessionId: str
-    candidate: Optional[dict[str, Any]] = None
-    message: Optional[str] = None
+
+    candidate: dict[str, Any] | None = None
+
+    message: str | None = None
 
 
-class Feedback(BaseModel):
-    summary: str
-    strengths: list[str]
-    gaps: list[str]
-    next: list[str]
-
+# ============================================================
+# INTERVIEW RESPONSE
+# ============================================================
 
 class InterviewResponse(BaseModel):
+
     reply: str
+
     done: bool
-    feedback: Optional[Feedback] = None
+
+    feedback: InterviewFeedback | None = None
