@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+app =FASTAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
