@@ -26,10 +26,15 @@ from memory import (
 # ============================================================
 
 MAX_INTERVIEW_QUESTIONS = 8
+
+# We want the interview to touch at least 4 different
+# curriculum areas when possible.
 MIN_CURRICULUM_TOPICS = 4
 
 BASE_DIR = Path(__file__).resolve().parent
+
 DATA_DIR = BASE_DIR / "Data"
+
 CURRICULUM_FILE = DATA_DIR / "curriculum.json"
 
 
@@ -47,6 +52,7 @@ def parse_json_response(raw_response: str):
 
     cleaned = raw_response.strip()
 
+    # Remove markdown code fences.
     if cleaned.startswith("```"):
 
         lines = cleaned.splitlines()
@@ -59,6 +65,7 @@ def parse_json_response(raw_response: str):
 
         cleaned = "\n".join(lines).strip()
 
+    # Direct JSON parse.
     try:
 
         result = json.loads(cleaned)
@@ -76,6 +83,7 @@ def parse_json_response(raw_response: str):
     except json.JSONDecodeError:
         pass
 
+    # Try extracting JSON object from surrounding text.
     start = cleaned.find("{")
     end = cleaned.rfind("}")
 
@@ -97,7 +105,7 @@ def parse_json_response(raw_response: str):
 
 
 # ============================================================
-# STRING LIST
+# NORMALIZATION HELPERS
 # ============================================================
 
 def normalize_string_list(value):
@@ -119,6 +127,16 @@ def normalize_string_list(value):
     return result
 
 
+def normalize_question(question):
+
+    if not isinstance(question, str):
+        return ""
+
+    return " ".join(
+        question.lower().strip().split()
+    )
+
+
 # ============================================================
 # LOAD CURRICULUM
 # ============================================================
@@ -134,7 +152,7 @@ def load_curriculum():
     with open(
         CURRICULUM_FILE,
         "r",
-        encoding="utf-8"
+        encoding="utf-8",
     ) as f:
 
         curriculum = json.load(f)
@@ -155,15 +173,49 @@ def get_curriculum_days(curriculum):
     if not isinstance(days, list):
         return []
 
-    return [
-        item
-        for item in days
-        if isinstance(item, dict)
-    ]
+    result = []
+
+    for item in days:
+
+        if isinstance(item, dict):
+
+            # Ignore malformed curriculum entries.
+            if item.get("day") is None:
+                continue
+
+            if not item.get("title"):
+                continue
+
+            result.append(item)
+
+    return result
 
 
 # ============================================================
-# CANDIDATE TOPICS
+# CURRICULUM SUMMARY
+# ============================================================
+
+def build_curriculum_summary(curriculum):
+
+    summary = []
+
+    for item in get_curriculum_days(curriculum):
+
+        summary.append(
+            {
+                "day": item.get("day"),
+                "title": item.get("title", ""),
+                "type": item.get("type", ""),
+                "tools": item.get("tools", []),
+                "objectives": item.get("objectives", []),
+            }
+        )
+
+    return summary
+
+
+# ============================================================
+# CANDIDATE MISSION EXTRACTION
 # ============================================================
 
 def get_candidate_topics(candidate):
@@ -183,52 +235,81 @@ def get_candidate_topics(candidate):
         if not isinstance(mission, dict):
             continue
 
-        if mission.get("passed") is True:
+        # Your candidate JSON uses passed=True for completed missions.
+        passed = mission.get("passed")
 
-            title = mission.get("title")
+        # Also accept common completed-status formats.
+        status = str(
+            mission.get("status", "")
+        ).lower().strip()
 
-            if isinstance(title, str) and title.strip():
-                topics.append(title.strip())
+        completed = (
+            passed is True
+            or status in {
+                "passed",
+                "completed",
+                "complete",
+                "done",
+            }
+        )
+
+        if not completed:
+            continue
+
+        title = mission.get("title")
+
+        if isinstance(title, str) and title.strip():
+
+            clean_title = title.strip()
+
+            if clean_title not in topics:
+                topics.append(clean_title)
 
     return topics
 
 
 # ============================================================
-# CURRICULUM SUMMARY
+# CANDIDATE PROFILE SUMMARY
 # ============================================================
 
-def build_curriculum_summary(curriculum):
+def build_candidate_summary(candidate):
 
-    summary = []
+    if not isinstance(candidate, dict):
+        return {}
 
-    for item in get_curriculum_days(curriculum):
-
-        summary.append({
-            "day": item.get("day"),
-            "title": item.get("title", ""),
-            "tools": item.get("tools", []),
-            "objectives": item.get("objectives", []),
-        })
-
-    return summary
-
-
-# ============================================================
-# QUESTION NORMALIZATION
-# ============================================================
-
-def normalize_question(question):
-
-    if not isinstance(question, str):
-        return ""
-
-    return " ".join(
-        question.lower().strip().split()
+    member = candidate.get(
+        "member",
+        {}
     )
 
+    if not isinstance(member, dict):
+        member = {}
+
+    return {
+        "name": member.get(
+            "name",
+            "Candidate"
+        ),
+        "role": member.get(
+            "jobRole",
+            "Software Engineer"
+        ),
+        "experience": member.get(
+            "yearsExperience",
+            0
+        ),
+        "education": member.get(
+            "education",
+            "Not specified"
+        ),
+        "completed_missions": get_candidate_topics(
+            candidate
+        ),
+    }
+
 
 # ============================================================
-# GET PREVIOUS QUESTIONS
+# PREVIOUS QUESTIONS
 # ============================================================
 
 def get_previous_questions(session_id):
@@ -250,6 +331,7 @@ def get_previous_questions(session_id):
         )
 
         if isinstance(question, str):
+
             question = question.strip()
 
             if question:
@@ -259,12 +341,12 @@ def get_previous_questions(session_id):
 
 
 # ============================================================
-# DUPLICATE CHECK
+# DUPLICATE QUESTION CHECK
 # ============================================================
 
 def is_duplicate_question(
     session_id,
-    question
+    question,
 ):
 
     normalized = normalize_question(
@@ -284,6 +366,7 @@ def is_duplicate_question(
             old_question
         )
 
+        # Exact duplicate.
         if normalized == old_normalized:
             return True
 
@@ -291,71 +374,139 @@ def is_duplicate_question(
 
 
 # ============================================================
-# CHOOSE NEXT TOPIC
+# TOPIC SELECTION
 # ============================================================
 
 def choose_topic_for_question(
     curriculum,
     covered_topics,
     topic_counts,
+    candidate_topics=None,
 ):
 
-    days = get_curriculum_days(curriculum)
+    days = get_curriculum_days(
+        curriculum
+    )
 
     if not days:
         return None
 
-    # First cover at least 4 different topics.
-    if len(covered_topics) < MIN_CURRICULUM_TOPICS:
+    candidate_topics = (
+        candidate_topics
+        if isinstance(candidate_topics, list)
+        else []
+    )
 
-        for item in days:
+    # --------------------------------------------------------
+    # STEP 1
+    # Prefer curriculum topics that relate to the candidate's
+    # completed missions.
+    # --------------------------------------------------------
 
-            title = item.get("title")
+    candidate_keywords = " ".join(
+        str(topic).lower()
+        for topic in candidate_topics
+    )
 
-            if (
-                title
-                and title not in covered_topics
-            ):
-                return item
-
-    # Then choose least-used topic.
-    candidates = []
+    scored = []
 
     for item in days:
 
-        title = item.get("title")
+        title = str(
+            item.get("title", "")
+        )
 
-        if not title:
-            continue
+        objectives = item.get(
+            "objectives",
+            []
+        )
 
+        tools = item.get(
+            "tools",
+            []
+        )
+
+        searchable = (
+            title
+            + " "
+            + " ".join(
+                str(x)
+                for x in objectives
+            )
+            + " "
+            + " ".join(
+                str(x)
+                for x in tools
+            )
+        ).lower()
+
+        score = 0
+
+        # Candidate mission similarity.
+        for mission in candidate_topics:
+
+            words = [
+                word
+                for word in str(mission).lower().split()
+                if len(word) >= 4
+            ]
+
+            for word in words:
+
+                if word in searchable:
+                    score += 1
+
+        # Prefer topics not already covered.
+        if title not in covered_topics:
+            score += 3
+
+        # Prefer topics used fewer times.
         count = topic_counts.get(
             title,
             0
         )
 
-        candidates.append(
+        score -= count * 2
+
+        scored.append(
             (
+                score,
                 count,
-                item.get(
-                    "day",
-                    999999
-                ),
-                item
+                item.get("day", 999999),
+                item,
             )
         )
 
-    candidates.sort(
+    # If we still need diversity, strongly prefer new topics.
+    if len(covered_topics) < MIN_CURRICULUM_TOPICS:
+
+        new_topics = [
+            x
+            for x in scored
+            if x[3].get("title")
+            not in covered_topics
+        ]
+
+        if new_topics:
+            new_topics.sort(
+                key=lambda x: (
+                    -x[0],
+                    x[1],
+                    x[2],
+                )
+            )
+
+            return new_topics[0][3]
+
+    scored.sort(
         key=lambda x: (
-            x[0],
-            x[1]
+            -x[0],
+            x[1],
+            x[2],
         )
     )
 
-    return (
-        candidates[0][2]
-        if candidates
-        else None
-    )
+    return scored[0][3]
 
 
 # ============================================================
@@ -363,15 +514,21 @@ def choose_topic_for_question(
 # ============================================================
 
 def build_fallback_question(
-    selected
+    selected,
 ):
 
     if not selected:
+
         return (
-            "How would you validate a "
-            "production system for reliability, "
-            "security, and maintainability?"
+            "How would you validate a production "
+            "AI system for reliability, security, "
+            "and maintainability?"
         )
+
+    title = selected.get(
+        "title",
+        "this technical area"
+    )
 
     objectives = selected.get(
         "objectives",
@@ -388,20 +545,48 @@ def build_fallback_question(
             ):
 
                 return (
-                    "How would you approach "
+                    "How would you apply "
                     + objective.strip()
-                    + " in a production system?"
+                    + " when building a production system?"
                 )
-
-    title = selected.get(
-        "title",
-        "this technical area"
-    )
 
     return (
         "How would you design and validate "
         f"a production solution related to {title}?"
     )
+
+
+# ============================================================
+# DIFFICULTY FROM ANSWER
+# ============================================================
+
+def determine_next_difficulty(
+    evaluation
+):
+
+    gaps = normalize_string_list(
+        evaluation.get(
+            "gaps",
+            []
+        )
+    )
+
+    strengths = normalize_string_list(
+        evaluation.get(
+            "strengths",
+            []
+        )
+    )
+
+    # Strong answer -> harder.
+    if len(strengths) >= 2 and len(gaps) <= 1:
+        return "hard"
+
+    # Weak answer -> medium/easier.
+    if len(gaps) >= 3:
+        return "easy"
+
+    return "medium"
 
 
 # ============================================================
@@ -412,35 +597,7 @@ def build_first_question(candidate):
 
     curriculum = load_curriculum()
 
-    member = candidate.get(
-        "member",
-        {}
-    )
-
-    if not isinstance(member, dict):
-        member = {}
-
-    name = member.get(
-        "name",
-        "Candidate"
-    )
-
-    role = member.get(
-        "jobRole",
-        "Software Engineer"
-    )
-
-    experience = member.get(
-        "yearsExperience",
-        0
-    )
-
-    education = member.get(
-        "education",
-        "Not specified"
-    )
-
-    completed_topics = get_candidate_topics(
+    candidate_summary = build_candidate_summary(
         candidate
     )
 
@@ -450,45 +607,82 @@ def build_first_question(candidate):
         )
     )
 
+    completed_topics = candidate_summary.get(
+        "completed_missions",
+        []
+    )
+
+    # Choose a topic before calling the LLM.
+    selected = choose_topic_for_question(
+        curriculum=curriculum,
+        covered_topics=[],
+        topic_counts={},
+        candidate_topics=completed_topics,
+    )
+
+    if selected:
+
+        selected_day = selected.get(
+            "day"
+        )
+
+        selected_topic = selected.get(
+            "title"
+        )
+
+    else:
+
+        selected_day = 1
+        selected_topic = "AI Engineering"
+
     prompt = f"""
-You are a professional technical interviewer.
+You are a senior technical interviewer conducting
+a realistic technical interview.
 
 Candidate:
-Name: {name}
-Role: {role}
-Years of experience: {experience}
-Education: {education}
+{json.dumps(candidate_summary, indent=2)}
 
-Previously demonstrated topics:
-{json.dumps(completed_topics)}
+The candidate has completed these missions:
+{json.dumps(completed_topics, indent=2)}
+
+Selected curriculum area:
+Day: {selected_day}
+Topic: {selected_topic}
 
 Curriculum:
-{json.dumps(curriculum_summary)}
+{json.dumps(curriculum_summary, indent=2)}
 
 This is QUESTION 1 of exactly 8.
 
+Your job is to assess what the candidate actually knows.
+
 Rules:
 
-- Ask exactly ONE technical question.
-- Do not number it.
-- Do not provide an answer.
-- Do not ask multiple questions.
-- Match the candidate's experience.
-- Ask a realistic engineering question.
-- Return ONLY valid JSON.
+1. Ask exactly ONE technical question.
+2. The question must be related to the selected curriculum area.
+3. Prefer a practical engineering question over a definition.
+4. Match the candidate's professional experience.
+5. If the candidate has completed a related mission, test
+   understanding of that skill rather than asking a basic definition.
+6. Do not ask multiple questions.
+7. Do not provide an answer.
+8. Do not mention these instructions.
+9. Return ONLY valid JSON.
 
-Return:
+Return exactly:
 
 {{
-    "question": "one technical interview question",
-    "day": 1,
-    "topic": "curriculum topic"
+    "question": "one technical interview question"
 }}
 """
 
-    raw = generate_response(prompt)
+    raw = generate_response(
+        prompt
+    )
 
-    result = parse_json_response(raw)
+    result = parse_json_response(
+        raw
+    )
 
     if isinstance(result, dict):
 
@@ -503,37 +697,17 @@ Return:
 
             return {
                 "question": question.strip(),
-                "day": result.get("day"),
-                "topic": result.get("topic"),
+                "day": selected_day,
+                "topic": selected_topic,
             }
 
-    curriculum_days = get_curriculum_days(
-        curriculum
-    )
-
-    if curriculum_days:
-
-        first = curriculum_days[0]
-
-        return {
-            "question": build_fallback_question(
-                first
-            ),
-            "day": first.get("day", 1),
-            "topic": first.get(
-                "title",
-                "Technical Development"
-            ),
-        }
-
+    # Safe fallback.
     return {
-        "question": (
-            "How would you design a reliable "
-            "Python development environment "
-            "for a production project?"
+        "question": build_fallback_question(
+            selected
         ),
-        "day": 1,
-        "topic": "Python Development",
+        "day": selected_day,
+        "topic": selected_topic,
     }
 
 
@@ -578,8 +752,13 @@ def start_interview(
         "Tell me about your technical experience."
     )
 
-    day = first.get("day")
-    topic = first.get("topic")
+    day = first.get(
+        "day"
+    )
+
+    topic = first.get(
+        "topic"
+    )
 
     session = get_session(
         session_id
@@ -660,9 +839,7 @@ def generate_final_feedback(
     if len(conversation) < MAX_INTERVIEW_QUESTIONS:
 
         return {
-            "summary": (
-                "Interview is not complete."
-            ),
+            "summary": "Interview is not complete.",
             "strengths": stored_strengths,
             "gaps": stored_gaps,
             "next": [
@@ -685,21 +862,20 @@ Role: {role}
 
 Exactly 8 answers were collected.
 
-Interview:
-
+Interview conversation:
 {json.dumps(conversation, indent=2)}
 
-Evaluations:
-
+Per-answer evaluations:
 {json.dumps(evaluations, indent=2)}
 
-Topics:
-
+Curriculum topics covered:
 {json.dumps(covered_topics, indent=2)}
 
-Evaluate only what the candidate demonstrated.
+Evaluate ONLY what the candidate demonstrated.
 
-Do not invent experience or skills.
+Do not invent experience.
+Do not reward skills that were not demonstrated.
+Do not judge the candidate based on their job title alone.
 
 Return ONLY valid JSON:
 
@@ -763,40 +939,47 @@ No extra keys.
 
             return {
                 "summary": summary.strip(),
+
                 "strengths": (
                     strengths
                     or stored_strengths
                 ),
+
                 "gaps": (
                     gaps
                     or stored_gaps
                 ),
+
                 "next": (
                     next_steps
                     or [
-                        "Continue building production-grade projects."
+                        "Continue practicing production-oriented AI engineering."
                     ]
                 ),
             }
 
+    # Safe fallback.
     return {
         "summary": (
             f"{candidate_name} completed the "
             f"{MAX_INTERVIEW_QUESTIONS}-question "
             "technical interview."
         ),
+
         "strengths": (
             stored_strengths
             or [
                 "Demonstrated technical understanding during the interview."
             ]
         ),
+
         "gaps": (
             stored_gaps
             or [
                 "Continue developing deeper production-level expertise."
             ]
         ),
+
         "next": [
             "Practice production-oriented technical projects."
         ],
@@ -856,7 +1039,7 @@ def continue_interview(
         }
 
     # --------------------------------------------------------
-    # Number of answers already received
+    # Answers already received
     # --------------------------------------------------------
 
     answered_count = get_question_number(
@@ -865,16 +1048,12 @@ def continue_interview(
 
     # --------------------------------------------------------
     # HARD STOP
-    #
-    # If 8 answers already exist, NEVER call LLM again.
     # --------------------------------------------------------
 
     if answered_count >= MAX_INTERVIEW_QUESTIONS:
 
-        final_feedback = (
-            generate_final_feedback(
-                session_id
-            )
+        final_feedback = generate_final_feedback(
+            session_id
         )
 
         return {
@@ -905,10 +1084,6 @@ def continue_interview(
             "Tell me about your technical experience."
         )
 
-    # --------------------------------------------------------
-    # Current question number
-    # --------------------------------------------------------
-
     current_question_number = (
         answered_count + 1
     )
@@ -926,31 +1101,17 @@ def continue_interview(
         session_id
     )
 
-    member = candidate.get(
-        "member",
-        {}
+    candidate_summary = build_candidate_summary(
+        candidate
     )
 
-    if not isinstance(member, dict):
-        member = {}
-
-    candidate_name = member.get(
-        "name",
-        "Candidate"
-    )
-
-    role = member.get(
-        "jobRole",
-        "Software Engineer"
-    )
-
-    experience = member.get(
-        "yearsExperience",
-        0
+    candidate_topics = candidate_summary.get(
+        "completed_missions",
+        []
     )
 
     # --------------------------------------------------------
-    # Context
+    # Curriculum and memory
     # --------------------------------------------------------
 
     curriculum = load_curriculum()
@@ -983,94 +1144,190 @@ def continue_interview(
         )
     )
 
+    current_difficulty = session.get(
+        "difficulty",
+        "medium"
+    )
+
     # --------------------------------------------------------
-    # Evaluate answer + generate next question
+    # Select a preferred next curriculum topic.
+    #
+    # The LLM may override this only if it has a strong
+    # reason to continue the current topic as a follow-up.
+    # --------------------------------------------------------
+
+    selected = choose_topic_for_question(
+        curriculum=curriculum,
+        covered_topics=covered_topics,
+        topic_counts=topic_counts,
+        candidate_topics=candidate_topics,
+    )
+
+    selected_day = (
+        selected.get("day")
+        if selected
+        else current_day
+    )
+
+    selected_topic = (
+        selected.get("title")
+        if selected
+        else current_topic
+    )
+
+    # --------------------------------------------------------
+    # MAIN ADAPTIVE INTERVIEW PROMPT
     # --------------------------------------------------------
 
     prompt = f"""
-You are conducting a professional technical interview.
+You are a senior technical interviewer conducting
+a realistic adaptive interview.
 
 Candidate:
-Name: {candidate_name}
-Role: {role}
-Experience: {experience} years
+{json.dumps(candidate_summary, indent=2)}
 
-This is QUESTION {current_question_number}
-of EXACTLY {MAX_INTERVIEW_QUESTIONS}.
+CURRENT QUESTION NUMBER:
+{current_question_number} of {MAX_INTERVIEW_QUESTIONS}
+
+CURRENT DIFFICULTY:
+{current_difficulty}
 
 CURRENT QUESTION:
 {current_question}
 
-CANDIDATE ANSWER:
+CANDIDATE'S ANSWER:
 {candidate_answer}
 
-CURRENT TOPIC:
+CURRENT CURRICULUM TOPIC:
 {current_topic}
 
-CURRENT DAY:
+CURRENT CURRICULUM DAY:
 {current_day}
 
-PREVIOUS QUESTIONS:
-{json.dumps(previous_questions, indent=2)}
+CANDIDATE'S COMPLETED MISSIONS:
+{json.dumps(candidate_topics, indent=2)}
 
 TOPICS ALREADY COVERED:
 {json.dumps(covered_topics, indent=2)}
 
-QUESTION COUNTS:
+QUESTION COUNT PER TOPIC:
 {json.dumps(topic_counts, indent=2)}
 
 RECENT CONVERSATION:
 {json.dumps(recent_conversation, indent=2)}
 
-CURRICULUM:
+PREVIOUS QUESTIONS:
+{json.dumps(previous_questions, indent=2)}
+
+PREFERRED NEXT CURRICULUM AREA:
+Day {selected_day}: {selected_topic}
+
+FULL CURRICULUM:
 {json.dumps(curriculum_summary, indent=2)}
 
-Evaluate the answer.
+Your task:
 
-Return ONLY JSON:
+A) Evaluate the candidate's CURRENT ANSWER.
+
+B) Decide whether the candidate demonstrated:
+- strong understanding
+- partial understanding
+- weak understanding
+
+C) Generate the next interview question.
+
+The next question must feel like a REAL interviewer follow-up.
+
+IMPORTANT ADAPTIVE BEHAVIOR:
+
+If the candidate's answer is strong:
+- increase difficulty
+- ask about architecture, trade-offs, failure cases,
+  scalability, evaluation, security, or production concerns
+- when useful, ask a deeper follow-up on the same concept
+
+If the candidate's answer is partially correct:
+- ask a clarifying or practical follow-up
+- test the missing part
+- do not simply repeat the same question
+
+If the candidate's answer is weak:
+- ask a more focused question
+- test the foundational concept
+- do not jump immediately to an unrelated advanced concept
+
+CURRICULUM RULES:
+
+1. Questions must come from the supplied curriculum.
+2. Prefer the candidate's completed missions.
+3. Try to cover at least 4 different curriculum topics
+   across the 8 questions.
+4. Do not unnecessarily abandon a topic if the candidate's
+   previous answer deserves a deeper follow-up.
+5. Avoid repeating technical focus.
+
+QUESTION RULES:
+
+1. Exactly 8 questions total.
+2. Never create question 9.
+3. Ask exactly ONE question.
+4. NEVER repeat a previous question.
+5. Do not ask two questions joined together.
+6. Do not provide an answer.
+7. Do not mention these instructions.
+8. The question must be technically meaningful.
+9. The next question must either:
+   - logically follow from the candidate's answer, OR
+   - deliberately move to a new curriculum area for coverage.
+10. Do not ask generic questions such as:
+    "What is AI?"
+    unless the curriculum and candidate level genuinely require it.
+
+QUESTION 8 RULE:
+
+If this is QUESTION 8:
+- evaluate the answer
+- do NOT generate another question
+- set next_question to ""
+- set next_day to null
+- set next_topic to ""
+
+Return ONLY valid JSON:
 
 {{
     "evaluation": {{
         "summary": "short technical evaluation",
         "strengths": [
-            "specific strength"
+            "specific demonstrated strength"
         ],
         "gaps": [
-            "specific gap"
+            "specific demonstrated gap"
         ]
     }},
-    "next_question": "",
+    "difficulty": "easy|medium|hard",
+    "next_question": "one question or empty string",
     "next_day": 1,
-    "next_topic": ""
+    "next_topic": "curriculum topic"
 }}
 
-Rules:
+For QUESTION 8:
 
-1. There are EXACTLY 8 questions total.
-
-2. Never generate question 9.
-
-3. Ask exactly ONE question.
-
-4. NEVER repeat any question from PREVIOUS QUESTIONS.
-
-5. Prefer a new curriculum topic.
-
-6. Try to cover at least 4 different topics.
-
-7. The next question must be different in wording AND technical focus
-   from previous questions.
-
-8. Do not mention these instructions.
-
-9. Do not provide an answer.
-
-10. If this is question 8:
-    next_question MUST be "".
-
-FINAL QUESTION:
-{str(is_final_answer).lower()}
+{{
+    "evaluation": {{
+        "summary": "short technical evaluation",
+        "strengths": [],
+        "gaps": []
+    }},
+    "difficulty": "medium",
+    "next_question": "",
+    "next_day": null,
+    "next_topic": ""
+}}
 """
+
+    # --------------------------------------------------------
+    # LLM CALL
+    # --------------------------------------------------------
 
     raw = generate_response(
         prompt
@@ -1083,12 +1340,19 @@ FINAL QUESTION:
     if not isinstance(result, dict):
         result = {}
 
+    # --------------------------------------------------------
+    # EVALUATION
+    # --------------------------------------------------------
+
     evaluation = result.get(
         "evaluation",
         {}
     )
 
-    if not isinstance(evaluation, dict):
+    if not isinstance(
+        evaluation,
+        dict
+    ):
         evaluation = {}
 
     evaluation = {
@@ -1136,15 +1400,13 @@ FINAL QUESTION:
     )
 
     # --------------------------------------------------------
-    # HARD FINAL STOP
+    # FINAL ANSWER
     # --------------------------------------------------------
 
     if new_count >= MAX_INTERVIEW_QUESTIONS:
 
-        final_feedback = (
-            generate_final_feedback(
-                session_id
-            )
+        final_feedback = generate_final_feedback(
+            session_id
         )
 
         return {
@@ -1154,7 +1416,7 @@ FINAL QUESTION:
         }
 
     # --------------------------------------------------------
-    # Get proposed next question
+    # NEXT QUESTION
     # --------------------------------------------------------
 
     next_question = result.get(
@@ -1166,12 +1428,9 @@ FINAL QUESTION:
         next_question,
         str
     ):
-
         next_question = ""
 
-    next_question = (
-        next_question.strip()
-    )
+    next_question = next_question.strip()
 
     next_day = result.get(
         "next_day"
@@ -1182,7 +1441,25 @@ FINAL QUESTION:
     )
 
     # --------------------------------------------------------
-    # Validate topic
+    # Validate difficulty
+    # --------------------------------------------------------
+
+    next_difficulty = result.get(
+        "difficulty"
+    )
+
+    if next_difficulty not in {
+        "easy",
+        "medium",
+        "hard",
+    }:
+
+        next_difficulty = determine_next_difficulty(
+            evaluation
+        )
+
+    # --------------------------------------------------------
+    # Validate curriculum topic
     # --------------------------------------------------------
 
     valid_topics = {
@@ -1195,12 +1472,11 @@ FINAL QUESTION:
 
     if next_topic not in valid_topics:
 
-        selected = (
-            choose_topic_for_question(
-                curriculum,
-                covered_topics,
-                topic_counts,
-            )
+        selected = choose_topic_for_question(
+            curriculum=curriculum,
+            covered_topics=covered_topics,
+            topic_counts=topic_counts,
+            candidate_topics=candidate_topics,
         )
 
         if selected:
@@ -1214,7 +1490,23 @@ FINAL QUESTION:
             )
 
     # --------------------------------------------------------
-    # DUPLICATE QUESTION PROTECTION
+    # QUESTION 8 SAFETY
+    # --------------------------------------------------------
+
+    if new_count >= MAX_INTERVIEW_QUESTIONS:
+
+        final_feedback = generate_final_feedback(
+            session_id
+        )
+
+        return {
+            "reply": "Interview completed.",
+            "done": True,
+            "feedback": final_feedback,
+        }
+
+    # --------------------------------------------------------
+    # DUPLICATE / EMPTY QUESTION PROTECTION
     # --------------------------------------------------------
 
     if (
@@ -1231,16 +1523,12 @@ FINAL QUESTION:
 
         if not selected:
 
-            selected = (
-                choose_topic_for_question(
-                    curriculum,
-                    covered_topics,
-                    topic_counts,
-                )
+            selected = choose_topic_for_question(
+                curriculum=curriculum,
+                covered_topics=covered_topics,
+                topic_counts=topic_counts,
+                candidate_topics=candidate_topics,
             )
-
-        # Try several topics until a non-duplicate
-        # fallback question is found.
 
         candidate_questions = []
 
@@ -1251,10 +1539,11 @@ FINAL QUESTION:
                     selected,
                     build_fallback_question(
                         selected
-                    )
+                    ),
                 )
             )
 
+        # Try other curriculum topics.
         for item in get_curriculum_days(
             curriculum
         ):
@@ -1264,49 +1553,50 @@ FINAL QUESTION:
                     item,
                     build_fallback_question(
                         item
-                    )
+                    ),
                 )
             )
 
         found = False
 
-        for item, question in candidate_questions:
+        for item, fallback_question in candidate_questions:
 
             if not is_duplicate_question(
                 session_id,
-                question
+                fallback_question
             ):
 
-                selected = item
-                next_question = question
+                next_question = fallback_question
+
                 next_topic = item.get(
                     "title"
                 )
+
                 next_day = item.get(
                     "day"
                 )
 
                 found = True
+
                 break
 
+        # Extremely safe fallback.
         if not found:
 
-            # Extremely safe unique fallback.
             next_question = (
-                "How would you validate the "
-                "reliability, security, scalability, "
-                "and maintainability of a production "
-                "system you have designed?"
+                "How would you identify the most important "
+                "reliability risk in a production AI system "
+                "and explain how you would mitigate it?"
             )
 
             next_topic = (
-                "Production Engineering"
+                "Production & Capstone"
             )
 
-            next_day = 999
+            next_day = 31
 
     # --------------------------------------------------------
-    # FINAL duplicate safety check
+    # FINAL DUPLICATE SAFETY
     # --------------------------------------------------------
 
     if is_duplicate_question(
@@ -1315,13 +1605,23 @@ FINAL QUESTION:
     ):
 
         next_question = (
-            "How would you identify and resolve "
-            "the most important reliability risks "
-            "in a production software system?"
+            "How would you test and improve the reliability "
+            "of an AI application before deploying it to production?"
         )
 
+        # This should only happen in an extreme fallback case.
+        if is_duplicate_question(
+            session_id,
+            next_question
+        ):
+
+            next_question = (
+                "What production failure scenario would you "
+                "prioritize testing first in an AI system, and why?"
+            )
+
     # --------------------------------------------------------
-    # Store next question
+    # STORE NEXT QUESTION
     # --------------------------------------------------------
 
     session["current_question"] = (
@@ -1340,10 +1640,11 @@ FINAL QUESTION:
         session_id=session_id,
         topic=next_topic,
         day=next_day,
+        difficulty=next_difficulty,
     )
 
     # --------------------------------------------------------
-    # Return
+    # RETURN NEXT QUESTION
     # --------------------------------------------------------
 
     return {

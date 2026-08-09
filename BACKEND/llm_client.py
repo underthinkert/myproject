@@ -12,10 +12,10 @@ load_dotenv()
 
 
 # ============================================================
-# GET CONFIGURATION
+# CONFIGURATION
 # ============================================================
 
-api_key = os.getenv("OPENAI_API_KEY")
+api_key = os.getenv("OPENROUTER_API_KEY")
 
 base_url = os.getenv(
     "OPENAI_BASE_URL",
@@ -29,22 +29,23 @@ model = os.getenv(
 
 
 # ============================================================
-# VALIDATE API KEY
+# VALIDATE CONFIGURATION
 # ============================================================
 
 if not api_key:
     raise RuntimeError(
-        "OPENAI_API_KEY is missing."
+        "OPENROUTER_API_KEY is missing. "
+        "Add it to your local .env file or Render environment variables."
     )
 
 
 # ============================================================
-# CLIENT
+# OPENAI-COMPATIBLE CLIENT
 # ============================================================
 
 client = OpenAI(
     api_key=api_key,
-    base_url=base_url
+    base_url=base_url,
 )
 
 
@@ -52,7 +53,7 @@ client = OpenAI(
 # GENERATE RESPONSE
 # ============================================================
 
-def generate_response(prompt: str):
+def generate_response(prompt: str) -> str:
 
     if not prompt or not prompt.strip():
         raise ValueError(
@@ -66,17 +67,50 @@ def generate_response(prompt: str):
     print("Model:", model)
     print("========================================")
 
-    response = client.responses.create(
-        model=model,
-        input=prompt,
-        max_output_tokens=1000
-    )
+    try:
 
-    result = response.output_text.strip()
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            max_tokens=1200,
+            temperature=0.4,
+        )
 
-    print("========================================")
-    print("AI API CALL SUCCESSFUL")
-    print("Model:", model)
-    print("========================================")
+        if not response.choices:
+            raise RuntimeError(
+                "OpenRouter returned no choices."
+            )
 
-    return result
+        content = response.choices[0].message.content
+
+        if not content:
+            raise RuntimeError(
+                "OpenRouter returned an empty response."
+            )
+
+        result = content.strip()
+
+        print("========================================")
+        print("AI API CALL SUCCESSFUL")
+        print("Provider: OpenRouter")
+        print("Model:", model)
+        print("========================================")
+
+        return result
+
+    except Exception as e:
+
+        print("========================================")
+        print("AI API CALL FAILED")
+        print("Provider: OpenRouter")
+        print("Error:", str(e))
+        print("========================================")
+
+        raise RuntimeError(
+            f"OpenRouter API request failed: {str(e)}"
+        ) from e
