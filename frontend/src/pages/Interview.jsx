@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const API_URL = 'http://127.0.0.1:8000/api/interview';
-
+const API_URL ='https://myproject-s2k3.onrender.com/api/interview';
 function Interview() {
   const [config, setConfig] = useState(null);
   const [chat, setChat] = useState([]);
@@ -67,21 +66,18 @@ function Interview() {
         // ------------------------------------------------------
 
         const candidate = {
-          member: {
-            name: parsedConfig.name || 'Candidate',
+  member: {
+    name: parsedConfig.name || 'Candidate',
+    jobRole: parsedConfig.role || 'Software Engineer',
+    yearsExperience: 0,
+    education: 'Not specified',
+  },
 
-            jobRole:
-              parsedConfig.role ||
-              'Software Engineer',
-
-            yearsExperience: 0,
-
-            education: 'Not specified',
-          },
-
-          missions: [],
-        };
-
+  missions: (parsedConfig.selectedTopics || []).map((topic) => ({
+    title: topic,
+    passed: true,
+  })),
+};
         console.log(
           'Sending candidate to backend:',
           candidate
