@@ -3,30 +3,50 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
+
 # ============================================================
 # LOAD ENVIRONMENT VARIABLES
 # ============================================================
 
 load_dotenv()
 
+
 # ============================================================
-# GET API KEY
+# GET CONFIGURATION
 # ============================================================
 
 api_key = os.getenv("OPENAI_API_KEY")
+
+base_url = os.getenv(
+    "OPENAI_BASE_URL",
+    "https://openrouter.ai/api/v1"
+)
+
+model = os.getenv(
+    "OPENAI_MODEL",
+    "openai/gpt-4o-mini"
+)
+
+
+# ============================================================
+# VALIDATE API KEY
+# ============================================================
 
 if not api_key:
     raise RuntimeError(
         "OPENAI_API_KEY is missing."
     )
 
+
 # ============================================================
 # CLIENT
 # ============================================================
 
 client = OpenAI(
-    api_key=api_key
+    api_key=api_key,
+    base_url=base_url
 )
+
 
 # ============================================================
 # GENERATE RESPONSE
@@ -39,28 +59,24 @@ def generate_response(prompt: str):
             "Prompt cannot be empty."
         )
 
-    print("====================================")
+    print("========================================")
     print("AI API CALL STARTED")
-    print(
-        "Model:",
-        os.getenv(
-            "OPENAI_MODEL",
-            "gpt-4o-mini"
-        )
-    )
-    print("====================================")
+    print("Provider: OpenRouter")
+    print("Base URL:", base_url)
+    print("Model:", model)
+    print("========================================")
 
     response = client.responses.create(
-        model=os.getenv(
-            "OPENAI_MODEL",
-            "gpt-4o-mini"
-        ),
+        model=model,
         input=prompt,
         max_output_tokens=1000
     )
 
-    print("====================================")
-    print("AI API CALL SUCCESSFUL")
-    print("====================================")
+    result = response.output_text.strip()
 
-    return response.output_text.strip()
+    print("========================================")
+    print("AI API CALL SUCCESSFUL")
+    print("Model:", model)
+    print("========================================")
+
+    return result
