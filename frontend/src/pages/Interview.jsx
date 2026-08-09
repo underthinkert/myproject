@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const API_URL ='https://myproject-s2k3.onrender.com/api/interview';
+const API_URL = 'https://myproject-s2k3.onrender.com/api/interview';
 function Interview() {
   const [config, setConfig] = useState(null);
   const [chat, setChat] = useState([]);
