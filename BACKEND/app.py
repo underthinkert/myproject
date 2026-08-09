@@ -30,7 +30,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
+        "http://localhost:5174",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -77,7 +79,6 @@ def interview(
     # --------------------------------------------------------
 
     if request.candidate is not None:
-
         return start_interview(
             request.sessionId,
             request.candidate
@@ -90,7 +91,6 @@ def interview(
     if request.message is not None:
 
         if not request.message.strip():
-
             raise HTTPException(
                 status_code=400,
                 detail="Message cannot be empty."
